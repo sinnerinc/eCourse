@@ -75,27 +75,68 @@ npm run build
 You can use the following Dockerfile to automate the steps above:
 
 ```dockerfile
-FROM node:20.11.1-buster
+# Use a Node.js base image (updated to avoid EOL repos)
+FROM node:20-bookworm
 
-WORKDIR /
+# Set the working directory
+WORKDIR /app
 
-RUN git clone https://github.com/Ilyas-Codes/eCourse.git
+# Copy application files
+COPY . /app
 
-ARG PB_VERSION=0.21.3
-ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
-RUN unzip /tmp/pb.zip -d /eCourse/pb
+# Ensure entrypoint script is executable
+RUN chmod +x /app/entrypoint.sh
 
-WORKDIR /eCourse/ui
+# Install unzip utility (now works with Bookworm repos)
+RUN apt-get update && apt-get install -y unzip && rm -rf /var/lib/apt/lists/*
 
-RUN sed -i 's/^VITE_PROD_PB_URL=.*/VITE_PROD_PB_URL=http:\/\/127.0.0.1:8090/' .env
-RUN npm install
-RUN npm run build
-RUN mv dist/* /eCourse/pb/pb_public
+# Download and extract PocketBase (overwrite existing files without prompting)
+ARG PB_VERSION=0.22.20
+RUN mkdir -p /app/pb \
+    && echo "Downloading PocketBase version ${PB_VERSION}" \
+    && wget https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip -O /tmp/pb.zip \
+    && unzip -o /tmp/pb.zip -d /app/pb \
+    && rm /tmp/pb.zip \
+    && ls -la /app/pb
 
+# Switch to the UI directory
+WORKDIR /app/ui
+
+# Create .env if missing and update VITE_PROD_PB_URL
+# replace with details from your server
+RUN echo "VITE_PROD_PB_URL=http://mysite.lan:5211" > .env \
+    && sed -i 's/^VITE_PROD_PB_URL=.*/VITE_PROD_PB_URL=http:\/\/mysite.lan:5211/' .env \
+    && npm install \
+    && npm run build \
+    && mkdir -p /app/pb/pb_public \
+    && mv dist/* /app/pb/pb_public/
+
+# Expose the PocketBase port
 EXPOSE 8090
 
-CMD ["/eCourse/pb/pocketbase", "serve", "--http=0.0.0.0:8090"]
+# Use the script to start the application
+ENTRYPOINT ["/app/entrypoint.sh"]
 ```
+
+Then deploy container using built image:
+
+```
+version: '3.8'
+
+services:
+  ecourse:
+    image: local-ecourse:manual
+    container_name: ecourse
+    volumes:
+      - /volume1/data/courses:/app/media:ro
+      - /volume1/docker/eCourse:/app/pb/pb_data
+    environment:
+      - VITE_PROD_PB_URL=http://ecourse.mysite.lan  # I run it through reverse proxy
+    ports:
+      - "5211:8090"
+    restart: unless-stopped
+```
+
 
 ## Feedback & Suggestions
 
